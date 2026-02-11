@@ -54,11 +54,12 @@ const ctx = canvas.getContext('2d');
 canvas.width = maze[0].length * cellSize; 
 canvas.height = maze.length * cellSize;
 
-let startX, startY;
+let startX, startY, finishX, finishY;
 const teleporters = {};
 for (let y = 0; y < maze.length; y++) {
     for (let x = 0; x < maze[y].length; x++) {
         if (maze[y][x] === 'Y') { startX = x; startY = y; }
+        if (maze[y][x] === 'G') { finishX = x; finishY = y; }
         if (maze[y][x].startsWith('P')) { teleporters[maze[y][x]] = { x, y }; }
     }
 }
@@ -70,25 +71,19 @@ let wasHoveringNice = false;
 const previewSize = 90;
 const hoverLerp = 0.18;
 
+let hurtTimer = 0;
+let hurtX = -1, hurtY = -1;
+let hurtType = ''; // 'player' or 'finish'
+
 const bgMusic = new Audio('sounds/newjeans.mp3');
-const walkSound = new Audio('sounds/walk.mp3');
 const niceSound = new Audio('sounds/nice.mp3');
 const yaySound = new Audio('sounds/yay.mp3');
 const oofSound = new Audio('sounds/oof.mp3');
 const dangerSound = new Audio('sounds/screaming-cat.mp3');
 
-let audioUnlocked = false;
-function unlockAudio() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    bgMusic.loop = true;
-    bgMusic.volume = 0.5;
-    bgMusic.play().catch(() => {});
-    document.getElementById('sound-prompt').classList.add('hidden');
-}
-document.getElementById('sound-prompt').addEventListener('click', unlockAudio);
-document.addEventListener('keydown', unlockAudio, { once: true });
-canvas.addEventListener('click', unlockAudio, { once: true });
+bgMusic.loop = true;
+bgMusic.volume = 0.5;
+bgMusic.play().catch(() => {});
 
 canvas.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -100,10 +95,8 @@ canvas.addEventListener('mousemove', (e) => {
     const isPlayerCell = hoverCellY >= 0 && hoverCellY < maze.length && hoverCellX >= 0 && hoverCellX < maze[0].length && hoverCellX === playerX && hoverCellY === playerY;
     const isFinish = hoverCellY >= 0 && hoverCellY < maze.length && hoverCellX >= 0 && hoverCellX < maze[0].length && maze[hoverCellY][hoverCellX] === 'G';
     const isNice = (isPlayerCell || isFinish) && !isDanger;
-    if (audioUnlocked) {
-        if (isDanger && !wasHoveringDanger) dangerSound.play().catch(() => {});
-        if (isNice && !wasHoveringNice) niceSound.play().catch(() => {});
-    }
+    if (isDanger && !wasHoveringDanger) dangerSound.play().catch(() => {});
+    if (isNice && !wasHoveringNice) niceSound.play().catch(() => {});
     wasHoveringDanger = isDanger;
     wasHoveringNice = isNice;
     animate();
@@ -120,8 +113,9 @@ function animate() {
     const show = hasHoverPreview();
     hoverAlpha += (show ? hoverLerp : -hoverLerp);
     hoverAlpha = Math.max(0, Math.min(1, hoverAlpha));
+    if (hurtTimer > 0) hurtTimer -= 16; // Approximate frame time
     draw();
-    if (hoverAlpha > 0 && hoverAlpha < 1) requestAnimationFrame(animate);
+    if ((hoverAlpha > 0 && hoverAlpha < 1) || hurtTimer > 0) requestAnimationFrame(animate);
 }
 
 function draw() {
@@ -154,6 +148,23 @@ function draw() {
     const px = playerX * cellSize + 5, py = playerY * cellSize + 5, ps = cellSize - 10;
     if (images.player) ctx.drawImage(images.player, px, py, ps, ps);
     else { ctx.fillStyle = '#3498db'; ctx.fillRect(px, py, ps, ps); }
+
+    if (hurtTimer > 0 && hurtX >= 0 && hurtY >= 0) {
+        let img = null;
+        if (hurtType === 'player' && images.playerHurt) img = images.playerHurt;
+        if (img) {
+            const cx = hurtX * cellSize + cellSize / 2, cy = hurtY * cellSize + cellSize / 2;
+            const s = previewSize;
+            ctx.drawImage(img, cx - s / 2, cy - s / 2, s, s);
+        }
+    }
+
+    // Draw finish-hurt at finish position when player is hurt
+    if (hurtTimer > 0 && hurtType === 'player' && images.finishHurt) {
+        const cx = finishX * cellSize + cellSize / 2, cy = finishY * cellSize + cellSize / 2;
+        const s = previewSize;
+        ctx.drawImage(images.finishHurt, cx - s / 2, cy - s / 2, s, s);
+    }
 
     if (hoverAlpha > 0 && hoverCellX >= 0 && hoverCellY >= 0 && hoverCellY < maze.length && hoverCellX < maze[0].length) {
         const cell = maze[hoverCellY][hoverCellX];
@@ -188,19 +199,27 @@ document.addEventListener('keydown', (e) => {
         playerX = nx; playerY = ny;
         let cell = maze[playerY][playerX];
         if (cell === 'R') {
+            hurtX = playerX; hurtY = playerY;
+            hurtType = 'player';
+            hurtTimer = 1000;
             playerX = startX; playerY = startY;
-            if (audioUnlocked) oofSound.play().catch(() => {});
+            oofSound.play().catch(() => {});
         } else if (cell === 'G') {
-            if (audioUnlocked) yaySound.play().catch(() => {});
+            hurtX = playerX; hurtY = playerY;
+            hurtType = 'finish';
+            hurtTimer = 1000;
+            yaySound.play().catch(() => {});
+            yaySound.addEventListener('ended', () => {
+                window.location.href = 'goal.html';
+            }, { once: true });
             animate();
-            setTimeout(() => alert('Escaped!'), 10);
             return;
         } else {
             if (cell in pairs) {
                 playerX = teleporters[pairs[cell]].x;
                 playerY = teleporters[pairs[cell]].y;
             }
-            if (audioUnlocked) walkSound.play().catch(() => {});
+            // Removed walkSound.play();
         }
         animate();
     }
